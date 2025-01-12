@@ -1,8 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
-val DEV: String by project
-
 repositories {
     mavenCentral()
 
@@ -21,14 +19,14 @@ plugins {
 }
 
 publishing {
-  publications {
-    create<MavenPublication>("maven") {
-      groupId = "one.wabbit"
-      artifactId = "kotlin-web-kagi"
-      version = "1.0.0"
-      from(components["java"])
+    publications {
+        create<MavenPublication>("maven") {
+            groupId = "one.wabbit"
+            artifactId = "kotlin-web-kagi"
+            version = "1.0.0"
+            from(components["java"])
+        }
     }
-  }
 }
 
 dependencies {
