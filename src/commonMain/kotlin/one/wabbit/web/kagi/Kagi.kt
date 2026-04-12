@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 package one.wabbit.web.kagi
 
 import io.ktor.client.HttpClient
@@ -13,16 +15,16 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import one.wabbit.web.common.Etiquette
 import one.wabbit.web.common.Timeouts
 import one.wabbit.web.common.applyEtiquette
 import one.wabbit.web.common.applyTimeouts
-import one.wabbit.web.common.retryingHttpCall
-import one.wabbit.web.common.safeBodyPrefix
-import kotlin.coroutines.cancellation.CancellationException
-import kotlin.time.Duration.Companion.seconds
+import one.wabbit.web.common.responseBodySampleOrNull
+import one.wabbit.web.common.retryingIdempotentHttpCall
 
 sealed class KagiApiError(message: String, cause: Throwable? = null) : Exception(message, cause) {
     class InvalidInput(message: String) : KagiApiError(message)
@@ -32,36 +34,32 @@ sealed class KagiApiError(message: String, cause: Throwable? = null) : Exception
         val status: Int,
         val bodySample: String?,
         cause: Throwable? = null,
-    ) : KagiApiError(
-        buildString {
-            append("HTTP ")
-            append(status)
-            append(" from ")
-            append(url)
-            if (!bodySample.isNullOrBlank()) {
-                append(", body sample: ")
-                append(bodySample.take(256))
-            }
-        },
-        cause,
-    )
+    ) :
+        KagiApiError(
+            buildString {
+                append("HTTP ")
+                append(status)
+                append(" from ")
+                append(url)
+                if (!bodySample.isNullOrBlank()) {
+                    append(", body sample: ")
+                    append(bodySample.take(256))
+                }
+            },
+            cause,
+        )
 
-    class Network(
-        val url: String,
-        cause: Throwable,
-    ) : KagiApiError(
-        "Network failure talking to $url: ${cause::class.simpleName}: ${cause.message}",
-        cause,
-    )
+    class Network(val url: String, cause: Throwable) :
+        KagiApiError(
+            "Network failure talking to $url: ${cause::class.simpleName}: ${cause.message}",
+            cause,
+        )
 
-    class Parse(
-        val url: String,
-        val bodySample: String,
-        cause: Throwable,
-    ) : KagiApiError(
-        "Failed to parse Kagi response from $url: ${cause::class.simpleName}: ${cause.message}; body sample: ${bodySample.take(256)}",
-        cause,
-    )
+    class Parse(val url: String, val bodySample: String, cause: Throwable) :
+        KagiApiError(
+            "Failed to parse Kagi response from $url: ${cause::class.simpleName}: ${cause.message}; body sample: ${bodySample.take(256)}",
+            cause,
+        )
 }
 
 object Kagi {
@@ -70,8 +68,7 @@ object Kagi {
     enum class SummaryType(private val apiValue: String) {
         Summary("summary"),
         KeyPoints("takeaway"),
-        Takeaway("takeaway"),
-        ;
+        Takeaway("takeaway");
 
         override fun toString(): String = apiValue
 
@@ -130,18 +127,16 @@ object Kagi {
         targetLanguage: String? = null,
         cache: Boolean? = null,
     ): Response =
-        KtorKagiApi(
-            httpClient = httpClient,
-            config = KagiApi.Config(apiKey = kagiKey),
-        ).summarize(
-            Request(
-                url = req,
-                summaryType = summaryType,
-                model = model,
-                targetLanguage = targetLanguage,
-                cache = cache,
-            ),
-        )
+        KtorKagiApi(httpClient = httpClient, config = KagiApi.Config(apiKey = kagiKey))
+            .summarize(
+                Request(
+                    url = req,
+                    summaryType = summaryType,
+                    model = model,
+                    targetLanguage = targetLanguage,
+                    cache = cache,
+                )
+            )
 }
 
 interface KagiApi {
@@ -149,11 +144,8 @@ interface KagiApi {
         val apiKey: String,
         val baseUrl: String = "https://kagi.com/api/v0/summarize",
         val etiquette: Etiquette = Etiquette("one.wabbit.web.kagi/2.0"),
-        val timeouts: Timeouts = Timeouts(
-            request = 30.seconds,
-            connect = 30.seconds,
-            socket = 30.seconds,
-        ),
+        val timeouts: Timeouts =
+            Timeouts(request = 30.seconds, connect = 30.seconds, socket = 30.seconds),
     ) {
         init {
             require(apiKey.isNotBlank()) { "apiKey must not be blank" }
@@ -164,10 +156,7 @@ interface KagiApi {
     suspend fun summarize(request: Kagi.Request): Kagi.Response
 }
 
-class KtorKagiApi(
-    private val httpClient: HttpClient,
-    val config: KagiApi.Config,
-) : KagiApi {
+class KtorKagiApi(private val httpClient: HttpClient, val config: KagiApi.Config) : KagiApi {
     private val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
@@ -181,35 +170,37 @@ class KtorKagiApi(
 
     override suspend fun summarize(request: Kagi.Request): Kagi.Response {
         val normalized = request.normalized()
-        val response = try {
-            retryingHttpCall {
-                httpClient.get(config.baseUrl) {
-                    expectSuccess = true
-                    applyEtiquette(config.etiquette)
-                    applyTimeouts(config.timeouts)
-                    accept(ContentType.Application.Json)
-                    header(HttpHeaders.Authorization, "Bot ${config.apiKey}")
-                    parameter("url", normalized.url)
-                    parameter("summary_type", normalized.summaryType.toString())
-                    parameter("engine", normalized.model.name)
-                    normalized.targetLanguage?.let { parameter("target_language", it) }
-                    normalized.cache?.let { parameter("cache", it.toString()) }
+        val response =
+            try {
+                retryingIdempotentHttpCall {
+                    httpClient.get(config.baseUrl) {
+                        expectSuccess = true
+                        applyEtiquette(config.etiquette)
+                        applyTimeouts(config.timeouts)
+                        accept(ContentType.Application.Json)
+                        header(HttpHeaders.Authorization, "Bot ${config.apiKey}")
+                        parameter("url", normalized.url)
+                        parameter("summary_type", normalized.summaryType.toString())
+                        parameter("engine", normalized.model.name)
+                        normalized.targetLanguage?.let { parameter("target_language", it) }
+                        normalized.cache?.let { parameter("cache", it.toString()) }
+                    }
                 }
+            } catch (t: Throwable) {
+                throw t.toKagiError(config.baseUrl)
             }
-        } catch (t: Throwable) {
-            throw t.toKagiError(config.baseUrl)
-        }
 
         return response.decodeResponse(config.baseUrl)
     }
 
     private suspend fun HttpResponse.decodeResponse(url: String): Kagi.Response {
-        val body = try {
-            bodyAsText()
-        } catch (t: Throwable) {
-            if (t is CancellationException) throw t
-            throw KagiApiError.Network(url, t)
-        }
+        val body =
+            try {
+                bodyAsText()
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                throw KagiApiError.Network(url, t)
+            }
 
         return try {
             json.decodeFromString<Kagi.Response>(body)
@@ -226,11 +217,7 @@ private fun Kagi.Request.normalized(): Kagi.Request {
         throw KagiApiError.InvalidInput("url must not be blank")
     }
 
-    val normalizedLanguage =
-        targetLanguage
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-            ?.uppercase()
+    val normalizedLanguage = targetLanguage?.trim()?.takeIf { it.isNotEmpty() }?.uppercase()
 
     return copy(url = normalizedUrl, targetLanguage = normalizedLanguage)
 }
@@ -238,7 +225,7 @@ private fun Kagi.Request.normalized(): Kagi.Request {
 private suspend fun Throwable.toKagiError(url: String): KagiApiError {
     if (this is CancellationException) throw this
     return if (this is ResponseException) {
-        val sample = runCatching { response.safeBodyPrefix(2048) }.getOrNull()
+        val sample = responseBodySampleOrNull()
         KagiApiError.Http(url, response.status.value, sample, this)
     } else {
         KagiApiError.Network(url, this)

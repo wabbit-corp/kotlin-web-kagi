@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Wabbit-Public-Test-License-1.1
+
 package one.wabbit.web.kagi
 
 import io.ktor.client.HttpClient
@@ -11,10 +13,10 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlinx.coroutines.test.runTest
 
 class KagiSpec {
     @Test
@@ -30,7 +32,8 @@ class KagiSpec {
             assertEquals("Bot secret-key", request.headers[HttpHeaders.Authorization])
 
             respond(
-                content = """
+                content =
+                    """
                     {
                       "meta": {
                         "id": "120145af-f057-466d-9e6d-7829ac902adc",
@@ -44,21 +47,24 @@ class KagiSpec {
                         "future_data": true
                       }
                     }
-                """.trimIndent(),
+                    """
+                        .trimIndent(),
                 status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }
 
-        val result = Kagi.execute(
-            req = "https://example.com/post",
-            summaryType = Kagi.SummaryType.Summary,
-            model = Kagi.Model.agnes,
-            httpClient = client,
-            kagiKey = "secret-key",
-            targetLanguage = "de",
-            cache = false,
-        )
+        val result =
+            Kagi.execute(
+                req = "https://example.com/post",
+                summaryType = Kagi.SummaryType.Summary,
+                model = Kagi.Model.agnes,
+                httpClient = client,
+                kagiKey = "secret-key",
+                targetLanguage = "de",
+                cache = false,
+            )
 
         assertEquals("120145af-f057-466d-9e6d-7829ac902adc", result.meta.id)
         assertEquals("Short summary", result.data.output)
@@ -78,9 +84,7 @@ class KagiSpec {
         assertEquals(Kagi.SummaryType.KeyPoints, Kagi.SummaryType.fromString("key_points"))
         assertEquals(Kagi.SummaryType.Takeaway, Kagi.SummaryType.fromString("takeaway"))
 
-        assertFailsWith<IllegalArgumentException> {
-            Kagi.SummaryType.fromString("headline")
-        }
+        assertFailsWith<IllegalArgumentException> { Kagi.SummaryType.fromString("headline") }
     }
 
     @Test
@@ -88,7 +92,8 @@ class KagiSpec {
         val client = testClient { request ->
             assertEquals("takeaway", request.url.parameters["summary_type"])
             respond(
-                content = """
+                content =
+                    """
                     {
                       "meta": {
                         "id": "compat",
@@ -100,19 +105,22 @@ class KagiSpec {
                         "tokens": 42
                       }
                     }
-                """.trimIndent(),
+                    """
+                        .trimIndent(),
                 status = HttpStatusCode.OK,
-                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                headers =
+                    headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
             )
         }
 
-        val result = Kagi.execute(
-            req = "https://example.com/post",
-            summaryType = Kagi.SummaryType.KeyPoints,
-            model = Kagi.Model.cecil,
-            httpClient = client,
-            kagiKey = "secret-key",
-        )
+        val result =
+            Kagi.execute(
+                req = "https://example.com/post",
+                summaryType = Kagi.SummaryType.KeyPoints,
+                model = Kagi.Model.cecil,
+                httpClient = client,
+                kagiKey = "secret-key",
+            )
 
         assertEquals("Compatibility summary", result.data.output)
     }
@@ -126,7 +134,11 @@ class KagiSpec {
                         respond(
                             content = "insufficient credits",
                             status = HttpStatusCode.PaymentRequired,
-                            headers = headersOf(HttpHeaders.ContentType, ContentType.Text.Plain.toString()),
+                            headers =
+                                headersOf(
+                                    HttpHeaders.ContentType,
+                                    ContentType.Text.Plain.toString(),
+                                ),
                         )
                     },
                 config = KagiApi.Config(apiKey = "secret-key"),
@@ -141,9 +153,6 @@ class KagiSpec {
     }
 
     private fun testClient(
-        handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
-    ): HttpClient =
-        HttpClient(MockEngine(handler)) {
-            install(HttpTimeout)
-        }
+        handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData
+    ): HttpClient = HttpClient(MockEngine(handler)) { install(HttpTimeout) }
 }
